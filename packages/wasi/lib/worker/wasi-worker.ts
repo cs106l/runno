@@ -2,33 +2,56 @@ import { WASI } from "../wasi/wasi";
 import { WASIContextOptions, WASIContext } from "../wasi/wasi-context";
 import type { WASIExecutionResult, WASIFS } from "../types";
 import type { SyncDrive } from "../wasi/wasi-drive";
-import { Serializable, Serializer } from "./serializer";
+import { SerializedConnection } from "./serializer";
 
 class BlockingDrive implements SyncDrive {
   fs: WASIFS = {};
 
-  private serializer: Serializer;
+  private serializer: SerializedConnection;
 
   constructor(private buffer: SharedArrayBuffer) {
-    this.serializer = new Serializer(buffer);
+    this.serializer = new SerializedConnection(buffer);
   }
 
-  private call(name: DriveHostMessage["name"]) {
-    return (...args: any[]): any => {
-      // (1) postMessage to request system call, post args array
-      // (2) block on shared array buffer
-      // (3) deserialize result from buffer and return
+  open = this.call("open");
+  close = this.call("close");
+  read = this.call("read");
+  pread = this.call("pread");
+  write = this.call("write");
+  pwrite = this.call("pwrite");
+  sync = this.call("sync");
+  seek = this.call("seek");
+  tell = this.call("tell");
+  renumber = this.call("renumber");
+  unlink = this.call("unlink");
+  rename = this.call("rename");
+  list = this.call("list");
+  stat = this.call("stat");
+  pathStat = this.call("pathStat");
+  setFlags = this.call("setFlags");
+  getFlags = this.call("getFlags");
+  setSize = this.call("setSize");
+  setAccessTime = this.call("setAccessTime");
+  setModificationTime = this.call("setModificationTime");
+  pathSetAccessTime = this.call("pathSetAccessTime");
+  pathSetModificationTime = this.call("pathSetModificationTime");
+  pathCreateDir = this.call("pathCreateDir");
+
+  private call<Name extends Functions<SyncDrive>>(name: Name) {
+    return (
+      ...args: Parameters<SyncDrive[Name]>
+    ): ReturnType<SyncDrive[Name]> => {
       sendMessage({
         target: "host",
         type: "drive",
         name,
         args,
       });
+
+      // Note: the assumpption here is that every SyncDrive method returns something that is serializable!
+      return this.serializer.receive() as ReturnType<SyncDrive[Name]>;
     };
   }
-
-  open = this.call("open").bind(this);
-  read = this.call("read").bind(this);
 }
 
 type WorkerWASIContext = Partial<
@@ -80,11 +103,17 @@ type CrashHostMessage = {
   };
 };
 
-type DriveHostMessage = {
+type Functions<T> = {
+  [K in keyof T]: T[K] extends (...args: any[]) => any ? K : never;
+}[keyof T];
+
+type DriveHostMessage<
+  Name extends Functions<SyncDrive> = Functions<SyncDrive>
+> = {
   target: "host";
   type: "drive";
-  name: keyof SyncDrive;
-  args: Serializable[];
+  name: Name;
+  args: Parameters<SyncDrive[Name]>;
 };
 
 export type HostMessage =

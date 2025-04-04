@@ -1,149 +1,182 @@
 enum TypeTag {
-  Number = 1,
-  BigInt,
+  Int32 = 1,
+  Int64,
   Date,
+  String,
   Uint8Array,
   Array,
   Object,
 }
 
+type TypeTagMap = {
+  [TypeTag.Int32]: number;
+  [TypeTag.Int64]: bigint;
+  [TypeTag.Date]: Date;
+  [TypeTag.String]: string;
+  [TypeTag.Uint8Array]: Uint8Array;
+  [TypeTag.Array]: Serializable[];
+  [TypeTag.Object]: { [key: string]: Serializable };
+};
+
 export type Serializable =
-  | number
-  | bigint
-  | Date
-  | Uint8Array
+  | TypeTagMap[Exclude<TypeTag, TypeTag.Array | TypeTag.Object>]
   | Serializable[]
   | { [key: string]: Serializable };
 
-export class Serializer {
+export class SerializedConnection {
   private view: DataView;
+  private atomicsView: Int32Array;
+
   private offset = 0;
+  private encoder = new TextEncoder();
 
   constructor(private buffer: SharedArrayBuffer) {
     this.view = new DataView(buffer);
+    this.atomicsView = new Int32Array(buffer);
   }
 
-  private writeUint8(value: number) {
-    this.view.setUint8(this.offset++, value);
-  }
-
-  private writeUint8Array(value: Uint8Array) {
-    this.view.setUint32(this.offset, value.length);
-    this.offset += 4;
-    for (const v of value) this.writeUint8(v);
-  }
-
-  private writeFloat64(value: number) {
-    this.view.setFloat64(this.offset, value, true);
-    this.offset += 8;
-  }
-
-  private writeBigInt(value: bigint) {
-    this.view.setBigInt64(this.offset, value);
-    this.offset += 8;
-  }
-
-  private writeString(str: string) {
-    this.writeUint8(str.length);
-    for (let i = 0; i < str.length; i++)
-      this.view.setUint8(this.offset++, str.charCodeAt(i));
-  }
-
-  private write(data: Serializable) {
-    if (typeof data === "number") {
-      this.writeUint8(TypeTag.Number);
-      this.writeFloat64(data);
-    } else if (typeof data === "bigint") {
-      this.writeUint8(TypeTag.BigInt);
-      this.writeBigInt(data);
-    } else if (Array.isArray(data)) {
-      this.writeUint8(TypeTag.Array);
-      this.writeUint8(data.length);
-      for (const item of data) this.write(item);
-    } else if (data instanceof Uint8Array) {
-      this.writeUint8(TypeTag.Uint8Array);
-      this.writeUint8Array(data);
-    } else if (data instanceof Date) {
-      this.writeUint8(TypeTag.Date);
-      this.writeFloat64(data.getTime());
-    } else if (typeof data === "object" && data !== null) {
-      this.writeUint8(TypeTag.Object);
-      const keys = Object.keys(data);
-      this.writeUint8(keys.length);
-      for (const key of keys) {
-        this.writeString(key);
-        this.write(data[key]);
-      }
-    } else {
-      throw new Error(`Unsupported data type: ${JSON.stringify(data)}`);
+  async send(data: Serializable) {
+    /* Wait for receiving end to finish processing message */
+    while (Atomics.load(this.atomicsView, 0) !== 0) {
+      await Promise.resolve();
     }
+
+    this.offset = 4;
+    this.writeTagged(data);
+    Atomics.store(this.atomicsView, 0, 1);
+    Atomics.notify(this.atomicsView, 0, 1);
   }
 
-  serialize(data: Serializable) {
-    this.offset = 0;
-    this.write(data);
-  }
-
-  deserialize(): Serializable {
-    this.offset = 0;
-    return this.read();
-  }
-
-  private readUint8() {
-    return this.view.getUint8(this.offset++);
-  }
-
-  private readUint8Array() {
-    const length = this.view.getUint32(this.offset);
-    this.offset += 4;
-    const value = new Uint8Array(this.buffer, this.offset, length);
-    this.offset += length;
+  receive(): Serializable {
+    /* Wait for data to arrive */
+    Atomics.wait(this.atomicsView, 0, 0);
+    this.offset = 4;
+    const value = this.readTagged();
+    Atomics.store(this.atomicsView, 0, 0);
     return value;
   }
 
-  private readFloat64() {
-    const value = this.view.getFloat64(this.offset, true);
-    this.offset += 8;
-    return value;
+  private writeTagged(data: Serializable) {
+    if (data instanceof Date) return this.write(TypeTag.Date, data, true);
+    if (data instanceof Uint8Array)
+      return this.write(TypeTag.Uint8Array, data, true);
+
+    switch (typeof data) {
+      case "number":
+        this.write(TypeTag.Int32, data, true);
+        break;
+
+      case "bigint":
+        this.write(TypeTag.Int64, data, true);
+        break;
+
+      case "string":
+        this.write(TypeTag.String, data, true);
+        break;
+
+      case "object":
+        if (data === null) throw new Error("Cannot serialize null");
+        if (Array.isArray(data)) this.write(TypeTag.Array, data, true);
+        else this.write(TypeTag.Object, data, true);
+        break;
+
+      default:
+        throw new Error(`Unsupported type: ${typeof data}`);
+    }
   }
 
-  private readBigInt() {
-    const value = this.view.getBigInt64(this.offset);
-    this.offset += 8;
-    return value;
+  private write<Tag extends TypeTag>(
+    tag: Tag,
+    data: TypeTagMap[Tag],
+    tagged?: boolean
+  ) {
+    if (tagged) this.view.setUint8(this.offset++, tag);
+
+    switch (tag) {
+      case TypeTag.Int32:
+        this.view.setInt32(this.offset, data as TypeTagMap[TypeTag.Int32]);
+        this.offset += 4;
+        break;
+
+      case TypeTag.Int64:
+        this.view.setBigInt64(this.offset, data as TypeTagMap[TypeTag.Int64]);
+        this.offset += 8;
+        break;
+
+      case TypeTag.Date:
+        const date = data as TypeTagMap[TypeTag.Date];
+        this.write(TypeTag.Int64, BigInt(date.getTime()));
+        break;
+
+      case TypeTag.String:
+        const str = data as TypeTagMap[TypeTag.String];
+        this.write(TypeTag.Uint8Array, this.encoder.encode(str));
+        break;
+
+      case TypeTag.Uint8Array:
+        const byteArray = data as TypeTagMap[TypeTag.Uint8Array];
+        this.write(TypeTag.Int32, byteArray.length);
+        for (const byte of byteArray) this.view.setUint8(this.offset++, byte);
+        break;
+
+      case TypeTag.Array:
+        const array = data as TypeTagMap[TypeTag.Array];
+        this.write(TypeTag.Int32, array.length);
+        for (const item of array) this.writeTagged(item);
+        break;
+
+      case TypeTag.Object:
+        this.write(TypeTag.Array, Object.entries(data));
+        break;
+
+      default:
+        throw new Error(`Unsupported tag: ${tag}`);
+    }
   }
 
-  private readString() {
-    const length = this.readUint8();
-    let str = "";
-    for (let i = 0; i < length; i++)
-      str += String.fromCharCode(this.readUint8());
-    return str;
+  private readTagged(): Serializable {
+    const tag = this.view.getUint8(this.offset++) as TypeTag;
+    return this.read(tag);
   }
 
-  private read(): Serializable {
-    const type = this.readUint8();
-    if (type === TypeTag.Number) return this.readFloat64();
-    if (type === TypeTag.BigInt) return this.readBigInt();
-    if (type === TypeTag.Array) {
-      const length = this.readUint8();
-      return Array.from({ length }, () => this.read());
-    }
+  private read<Tag extends TypeTag>(tag: Tag): TypeTagMap[Tag] {
+    switch (tag) {
+      case TypeTag.Int32:
+        const int32 = this.view.getInt32(this.offset);
+        this.offset += 4;
+        return int32 as TypeTagMap[Tag];
 
-    if (type === TypeTag.Uint8Array) {
-      return this.readUint8Array();
-    }
+      case TypeTag.Int64:
+        const int64 = this.view.getBigInt64(this.offset);
+        this.offset += 8;
+        return int64 as TypeTagMap[Tag];
 
-    if (type === TypeTag.Date) {
-      return new Date(this.readFloat64());
-    }
+      case TypeTag.Date:
+        const epoch = Number(this.read(TypeTag.Int64));
+        return new Date(epoch) as TypeTagMap[Tag];
 
-    if (type === TypeTag.Object) {
-      const length = this.readUint8();
-      const obj: Record<string, Serializable> = {};
-      for (let i = 0; i < length; i++) obj[this.readString()] = this.read();
-      return obj;
+      case TypeTag.String:
+        const bytes = this.read(TypeTag.Uint8Array);
+        return new TextDecoder().decode(bytes) as TypeTagMap[Tag];
+
+      case TypeTag.Uint8Array:
+        const byteLength = this.read(TypeTag.Int32);
+        const byteArray = new Uint8Array(this.buffer, this.offset, byteLength);
+        this.offset += byteLength;
+        return byteArray as TypeTagMap[Tag];
+
+      case TypeTag.Array:
+        const arrLength = this.read(TypeTag.Int32);
+        const array: Serializable[] = [];
+        for (let i = 0; i < arrLength; i++) array.push(this.readTagged());
+        return array as TypeTagMap[Tag];
+
+      case TypeTag.Object:
+        const entries = this.read(TypeTag.Array) as [string, Serializable][];
+        return Object.fromEntries(entries) as TypeTagMap[Tag];
+
+      default:
+        throw new Error(`Unsupported tag: ${tag}`);
     }
-    throw new Error(`Invalid serializer tag: ${type}`);
   }
 }
