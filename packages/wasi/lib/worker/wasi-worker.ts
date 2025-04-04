@@ -1,6 +1,35 @@
 import { WASI } from "../wasi/wasi";
 import { WASIContextOptions, WASIContext } from "../wasi/wasi-context";
-import type { WASIExecutionResult } from "../types";
+import type { WASIExecutionResult, WASIFS } from "../types";
+import type { SyncDrive } from "../wasi/wasi-drive";
+import { Serializable, Serializer } from "./serializer";
+
+class BlockingDrive implements SyncDrive {
+  fs: WASIFS = {};
+
+  private serializer: Serializer;
+
+  constructor(private buffer: SharedArrayBuffer) {
+    this.serializer = new Serializer(buffer);
+  }
+
+  private call(name: DriveHostMessage["name"]) {
+    return (...args: any[]): any => {
+      // (1) postMessage to request system call, post args array
+      // (2) block on shared array buffer
+      // (3) deserialize result from buffer and return
+      sendMessage({
+        target: "host",
+        type: "drive",
+        name,
+        args,
+      });
+    };
+  }
+
+  open = this.call("open").bind(this);
+  read = this.call("read").bind(this);
+}
 
 type WorkerWASIContext = Partial<
   Omit<WASIContextOptions, "stdin" | "stdout" | "stderr" | "debug">
@@ -51,12 +80,20 @@ type CrashHostMessage = {
   };
 };
 
+type DriveHostMessage = {
+  target: "host";
+  type: "drive";
+  name: keyof SyncDrive;
+  args: Serializable[];
+};
+
 export type HostMessage =
   | StdoutHostMessage
   | StderrHostMessage
   | DebugHostMessage
   | ResultHostMessage
-  | CrashHostMessage;
+  | CrashHostMessage
+  | DriveHostMessage;
 
 onmessage = async (ev: MessageEvent) => {
   const data = ev.data as WorkerMessage;

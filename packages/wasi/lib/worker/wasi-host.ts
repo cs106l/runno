@@ -1,14 +1,25 @@
 import type { WASIContextOptions } from "../wasi/wasi-context";
-import type { WASIExecutionResult } from "../types";
+import type { WASIExecutionResult, WASIFS } from "../types";
 import type { HostMessage, WorkerMessage } from "./wasi-worker";
 
 import WASIWorker from "./wasi-worker?worker&inline";
+import { SyncDrive } from "../wasi/wasi-drive";
 
 function sendMessage(worker: Worker, message: WorkerMessage) {
   worker.postMessage(message);
 }
 
-type WASIWorkerHostContext = Partial<Omit<WASIContextOptions, "stdin">>;
+export type AsyncDrive = {
+  [K in keyof SyncDrive]: SyncDrive[K] extends (...args: infer A) => infer R
+    ? (...args: A) => R | Promise<R>
+    : SyncDrive[K];
+};
+
+type WASIWorkerHostContext = Partial<
+  Omit<WASIContextOptions, "stdin" | "fs">
+> & {
+  fs: WASIFS | AsyncDrive;
+};
 
 export class WASIWorkerHostKilledError extends Error {}
 
@@ -74,7 +85,7 @@ export class WASIWorkerHost {
         // that can't be sent as a message.
         args: this.context.args,
         env: this.context.env,
-        fs: this.context.fs,
+        // TODO: fs: this.context.fs,
         isTTY: this.context.isTTY,
       });
     }).then((result) => {
