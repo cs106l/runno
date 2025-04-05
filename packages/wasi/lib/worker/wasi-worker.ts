@@ -2,7 +2,7 @@ import { WASI } from "../wasi/wasi";
 import { WASIContextOptions, WASIContext } from "../wasi/wasi-context";
 import type { WASIExecutionResult, WASIFS } from "../types";
 import type { SyncDrive } from "../wasi/wasi-drive";
-import { SerializedConnection } from "./serializer";
+import { SerializedConnection } from "./connection";
 
 class BlockingDrive implements SyncDrive {
   fs: WASIFS = {};

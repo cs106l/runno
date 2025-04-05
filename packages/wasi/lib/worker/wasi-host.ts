@@ -4,7 +4,7 @@ import type { HostMessage, WorkerMessage } from "./wasi-worker";
 
 import WASIWorker from "./wasi-worker?worker&inline";
 import { SyncDrive, WASIDrive } from "../wasi/wasi-drive";
-import { SerializedConnection } from "./serializer";
+import { SerializedConnection } from "./connection";
 
 function sendMessage(worker: Worker, message: WorkerMessage) {
   worker.postMessage(message);
