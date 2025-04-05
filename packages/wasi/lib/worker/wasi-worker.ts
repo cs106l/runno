@@ -1,6 +1,58 @@
 import { WASI } from "../wasi/wasi";
 import { WASIContextOptions, WASIContext } from "../wasi/wasi-context";
-import type { WASIExecutionResult } from "../types";
+import type { WASIExecutionResult, WASIFS } from "../types";
+import type { SyncDrive } from "../wasi/wasi-drive";
+import { SerializedConnection } from "./connection";
+
+class BlockingDrive implements SyncDrive {
+  fs: WASIFS = {};
+
+  private connection: SerializedConnection;
+
+  constructor(buffer: SharedArrayBuffer) {
+    this.connection = new SerializedConnection(buffer);
+  }
+
+  open = this.call("open");
+  close = this.call("close");
+  read = this.call("read");
+  pread = this.call("pread");
+  write = this.call("write");
+  pwrite = this.call("pwrite");
+  sync = this.call("sync");
+  seek = this.call("seek");
+  tell = this.call("tell");
+  renumber = this.call("renumber");
+  unlink = this.call("unlink");
+  rename = this.call("rename");
+  list = this.call("list");
+  stat = this.call("stat");
+  pathStat = this.call("pathStat");
+  setFlags = this.call("setFlags");
+  getFlags = this.call("getFlags");
+  setSize = this.call("setSize");
+  setAccessTime = this.call("setAccessTime");
+  setModificationTime = this.call("setModificationTime");
+  pathSetAccessTime = this.call("pathSetAccessTime");
+  pathSetModificationTime = this.call("pathSetModificationTime");
+  pathCreateDir = this.call("pathCreateDir");
+
+  private call<Name extends Functions<SyncDrive>>(name: Name) {
+    return (
+      ...args: Parameters<SyncDrive[Name]>
+    ): ReturnType<SyncDrive[Name]> => {
+      sendMessage({
+        target: "host",
+        type: "drive",
+        name,
+        args,
+      });
+
+      // Note: the assumpption here is that every SyncDrive method returns something that is serializable!
+      return this.connection.receive() as ReturnType<SyncDrive[Name]>;
+    };
+  }
+}
 
 type WorkerWASIContext = Partial<
   Omit<WASIContextOptions, "stdin" | "stdout" | "stderr" | "debug">
@@ -11,6 +63,7 @@ type StartWorkerMessage = {
   type: "start";
   binaryURL: string;
   stdinBuffer: SharedArrayBuffer;
+  driveBuffer: SharedArrayBuffer;
 } & WorkerWASIContext;
 
 export type WorkerMessage = StartWorkerMessage;
@@ -51,12 +104,26 @@ type CrashHostMessage = {
   };
 };
 
+type Functions<T> = {
+  [K in keyof T]: T[K] extends (...args: any[]) => any ? K : never;
+}[keyof T];
+
+type DriveHostMessage<
+  Name extends Functions<SyncDrive> = Functions<SyncDrive>
+> = {
+  target: "host";
+  type: "drive";
+  name: Name;
+  args: Parameters<SyncDrive[Name]>;
+};
+
 export type HostMessage =
   | StdoutHostMessage
   | StderrHostMessage
   | DebugHostMessage
   | ResultHostMessage
-  | CrashHostMessage;
+  | CrashHostMessage
+  | DriveHostMessage;
 
 onmessage = async (ev: MessageEvent) => {
   const data = ev.data as WorkerMessage;
@@ -64,7 +131,13 @@ onmessage = async (ev: MessageEvent) => {
   switch (data.type) {
     case "start":
       try {
-        const result = await start(data.binaryURL, data.stdinBuffer, data);
+        const drive = new BlockingDrive(data.driveBuffer);
+        const result = await start(
+          data.binaryURL,
+          data.stdinBuffer,
+          data,
+          drive
+        );
         sendMessage({
           target: "host",
           type: "result",
@@ -101,12 +174,14 @@ function sendMessage(message: HostMessage) {
 async function start(
   binaryURL: string,
   stdinBuffer: SharedArrayBuffer,
-  context: WorkerWASIContext
+  context: WorkerWASIContext,
+  drive: BlockingDrive
 ) {
   return WASI.start(
     fetch(binaryURL),
     new WASIContext({
       ...context,
+      fs: drive,
       stdout: sendStdout,
       stderr: sendStderr,
       stdin: (maxByteLength) => getStdin(maxByteLength, stdinBuffer),

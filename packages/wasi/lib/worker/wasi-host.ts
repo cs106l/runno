@@ -1,14 +1,26 @@
 import type { WASIContextOptions } from "../wasi/wasi-context";
-import type { WASIExecutionResult } from "../types";
+import type { WASIExecutionResult, WASIFS } from "../types";
 import type { HostMessage, WorkerMessage } from "./wasi-worker";
 
 import WASIWorker from "./wasi-worker?worker&inline";
+import { SyncDrive, WASIDrive } from "../wasi/wasi-drive";
+import { SerializedConnection } from "./connection";
 
 function sendMessage(worker: Worker, message: WorkerMessage) {
   worker.postMessage(message);
 }
 
-type WASIWorkerHostContext = Partial<Omit<WASIContextOptions, "stdin">>;
+export type AsyncDrive = {
+  [K in keyof SyncDrive]: SyncDrive[K] extends (...args: infer A) => infer R
+    ? (...args: A) => R | Promise<R>
+    : SyncDrive[K];
+};
+
+type WASIWorkerHostContext = Partial<
+  Omit<WASIContextOptions, "stdin" | "fs">
+> & {
+  fs: WASIFS | AsyncDrive;
+};
 
 export class WASIWorkerHostKilledError extends Error {}
 
@@ -24,9 +36,21 @@ export class WASIWorkerHost {
   worker?: Worker;
   reject?: (reason?: unknown) => void;
 
+  private drive: AsyncDrive;
+  private driveConnection: SerializedConnection;
+
   constructor(binaryURL: string, context: WASIWorkerHostContext) {
     this.binaryURL = binaryURL;
     this.context = context;
+
+    // This is a similar hack as in `wasi-context.ts` to check if `fs` is an AsyncDrive
+    if ("open" in context.fs && typeof context.fs.open === "function")
+      this.drive = context.fs as AsyncDrive;
+    else this.drive = new WASIDrive(context.fs as WASIFS);
+
+    this.driveConnection = new SerializedConnection(
+      new SharedArrayBuffer(8 * 1024)
+    );
   }
 
   async start() {
@@ -61,6 +85,17 @@ export class WASIWorkerHost {
           case "crash":
             reject(message.error);
             break;
+          case "drive":
+            const fn = this.drive[message.name];
+            Promise.resolve(fn(...(message.args as any[])))
+              .then((result) => this.driveConnection.send(result))
+              .catch((error) => {
+                // On error in the AsyncDrive, we need to manually close the WebWorker (it will be asleep)
+                // and then reject the WasiWorkerHost's promise so clients see the error
+                this.worker?.terminate();
+                reject(error);
+              });
+            break;
         }
       });
 
@@ -69,12 +104,12 @@ export class WASIWorkerHost {
         type: "start",
         binaryURL: this.binaryURL,
         stdinBuffer: this.stdinBuffer,
+        driveBuffer: this.driveConnection.buffer,
 
         // Unfortunately can't just splat these because it includes types
         // that can't be sent as a message.
         args: this.context.args,
         env: this.context.env,
-        fs: this.context.fs,
         isTTY: this.context.isTTY,
       });
     }).then((result) => {
