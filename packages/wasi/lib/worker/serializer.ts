@@ -30,7 +30,7 @@ export class SerializedConnection {
   private offset = 0;
   private encoder = new TextEncoder();
 
-  constructor(private buffer: SharedArrayBuffer) {
+  constructor(public buffer: SharedArrayBuffer) {
     this.view = new DataView(buffer);
     this.atomicsView = new Int32Array(buffer);
   }

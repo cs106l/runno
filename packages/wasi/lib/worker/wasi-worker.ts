@@ -7,10 +7,10 @@ import { SerializedConnection } from "./serializer";
 class BlockingDrive implements SyncDrive {
   fs: WASIFS = {};
 
-  private serializer: SerializedConnection;
+  private connection: SerializedConnection;
 
-  constructor(private buffer: SharedArrayBuffer) {
-    this.serializer = new SerializedConnection(buffer);
+  constructor(buffer: SharedArrayBuffer) {
+    this.connection = new SerializedConnection(buffer);
   }
 
   open = this.call("open");
@@ -49,7 +49,7 @@ class BlockingDrive implements SyncDrive {
       });
 
       // Note: the assumpption here is that every SyncDrive method returns something that is serializable!
-      return this.serializer.receive() as ReturnType<SyncDrive[Name]>;
+      return this.connection.receive() as ReturnType<SyncDrive[Name]>;
     };
   }
 }
@@ -63,6 +63,7 @@ type StartWorkerMessage = {
   type: "start";
   binaryURL: string;
   stdinBuffer: SharedArrayBuffer;
+  driveBuffer: SharedArrayBuffer;
 } & WorkerWASIContext;
 
 export type WorkerMessage = StartWorkerMessage;
@@ -130,7 +131,13 @@ onmessage = async (ev: MessageEvent) => {
   switch (data.type) {
     case "start":
       try {
-        const result = await start(data.binaryURL, data.stdinBuffer, data);
+        const drive = new BlockingDrive(data.driveBuffer);
+        const result = await start(
+          data.binaryURL,
+          data.stdinBuffer,
+          data,
+          drive
+        );
         sendMessage({
           target: "host",
           type: "result",
@@ -167,12 +174,14 @@ function sendMessage(message: HostMessage) {
 async function start(
   binaryURL: string,
   stdinBuffer: SharedArrayBuffer,
-  context: WorkerWASIContext
+  context: WorkerWASIContext,
+  drive: BlockingDrive
 ) {
   return WASI.start(
     fetch(binaryURL),
     new WASIContext({
       ...context,
+      fs: drive,
       stdout: sendStdout,
       stderr: sendStderr,
       stdin: (maxByteLength) => getStdin(maxByteLength, stdinBuffer),
