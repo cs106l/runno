@@ -635,12 +635,16 @@ export class WASI implements SnapshotPreview1 {
       return Result.SUCCESS;
     }
 
-    const [status, stat] = this.drive.stat(fd);
-    if (status !== Result.SUCCESS) {
-      return status;
+    const [statResult, stat] = this.drive.stat(fd);
+    if (statResult !== Result.SUCCESS) {
+      return statResult;
     }
 
-    const flags = this.drive.getFlags(fd);
+    const [flagsResult, flags] = this.drive.getFlags(fd);
+    if (flagsResult !== Result.SUCCESS) {
+      return flagsResult;
+    }
+
     const buffer = createFdStat(stat.type, flags);
     const retBuffer = new Uint8Array(
       this.memory.buffer,
