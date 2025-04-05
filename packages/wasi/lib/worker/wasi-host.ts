@@ -110,7 +110,6 @@ export class WASIWorkerHost {
         // that can't be sent as a message.
         args: this.context.args,
         env: this.context.env,
-        // TODO: fs: this.context.fs,
         isTTY: this.context.isTTY,
       });
     }).then((result) => {

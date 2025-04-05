@@ -63,22 +63,18 @@ export class SerializedConnection {
 
     switch (typeof data) {
       case "number":
-        this.write(TypeTag.Int32, data, true);
-        break;
+        return this.write(TypeTag.Int32, data, true);
 
       case "bigint":
-        this.write(TypeTag.Int64, data, true);
-        break;
+        return this.write(TypeTag.Int64, data, true);
 
       case "string":
-        this.write(TypeTag.String, data, true);
-        break;
+        return this.write(TypeTag.String, data, true);
 
       case "object":
         if (data === null) throw new Error("Cannot serialize null");
-        if (Array.isArray(data)) this.write(TypeTag.Array, data, true);
-        else this.write(TypeTag.Object, data, true);
-        break;
+        if (Array.isArray(data)) return this.write(TypeTag.Array, data, true);
+        return this.write(TypeTag.Object, data, true);
 
       default:
         throw new Error(`Unsupported type: ${typeof data}`);
@@ -116,7 +112,13 @@ export class SerializedConnection {
       case TypeTag.Uint8Array:
         const byteArray = data as TypeTagMap[TypeTag.Uint8Array];
         this.write(TypeTag.Int32, byteArray.length);
-        for (const byte of byteArray) this.view.setUint8(this.offset++, byte);
+        const byteView = new Uint8Array(
+          this.buffer,
+          this.offset,
+          byteArray.length
+        );
+        byteView.set(byteArray);
+        this.offset += byteArray.length;
         break;
 
       case TypeTag.Array:
