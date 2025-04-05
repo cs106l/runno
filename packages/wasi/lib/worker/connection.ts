@@ -126,7 +126,12 @@ export class SerializedConnection {
         break;
 
       case TypeTag.Object:
-        this.write(TypeTag.Array, Object.entries(data));
+        const entries = Object.entries(data);
+        this.write(TypeTag.Int32, entries.length);
+        for (const [key, value] of entries) {
+          this.write(TypeTag.String, key);
+          this.writeTagged(value);
+        }
         break;
 
       default:
@@ -172,8 +177,13 @@ export class SerializedConnection {
         return array as TypeTagMap[Tag];
 
       case TypeTag.Object:
-        const entries = this.read(TypeTag.Array) as [string, Serializable][];
-        return Object.fromEntries(entries) as TypeTagMap[Tag];
+        const objLength = this.read(TypeTag.Int32);
+        const obj: { [key: string]: Serializable } = {};
+        for (let i = 0; i < objLength; i++) {
+          const key = this.read(TypeTag.String);
+          obj[key] = this.readTagged();
+        }
+        return obj as TypeTagMap[Tag];
 
       default:
         throw new Error(`Unsupported tag: ${tag}`);
