@@ -1,6 +1,6 @@
 import { WASI } from "../wasi/wasi";
-import { WASIContextOptions, WASIContext } from "../wasi/wasi-context";
-import type { WASIExecutionResult, WASIFS } from "../types";
+import { WASIContextOptions } from "../wasi/wasi-context";
+import type { WASIFS } from "../types";
 import type { SyncDrive } from "../wasi/wasi-drive";
 import { SerializedConnection } from "./connection";
 
@@ -92,7 +92,7 @@ type DebugHostMessage = {
 type ResultHostMessage = {
   target: "host";
   type: "result";
-  result: WASIExecutionResult;
+  exitCode: number;
 };
 
 type CrashHostMessage = {
@@ -101,6 +101,7 @@ type CrashHostMessage = {
   error: {
     message: string;
     type: string;
+    stack?: string;
   };
 };
 
@@ -141,7 +142,7 @@ onmessage = async (ev: MessageEvent) => {
         sendMessage({
           target: "host",
           type: "result",
-          result,
+          exitCode: result.exitCode,
         });
       } catch (e) {
         let error;
@@ -149,6 +150,7 @@ onmessage = async (ev: MessageEvent) => {
           error = {
             message: e.message,
             type: e.constructor.name,
+            stack: e.stack,
           };
         } else {
           error = {
@@ -177,17 +179,14 @@ async function start(
   context: WorkerWASIContext,
   drive: BlockingDrive
 ) {
-  return WASI.start(
-    fetch(binaryURL),
-    new WASIContext({
-      ...context,
-      fs: drive,
-      stdout: sendStdout,
-      stderr: sendStderr,
-      stdin: (maxByteLength) => getStdin(maxByteLength, stdinBuffer),
-      debug: sendDebug,
-    })
-  );
+  return WASI.start(fetch(binaryURL), {
+    ...context,
+    fs: drive,
+    stdout: sendStdout,
+    stderr: sendStderr,
+    stdin: (maxByteLength) => getStdin(maxByteLength, stdinBuffer),
+    debug: sendDebug,
+  });
 }
 
 function sendStdout(out: string) {

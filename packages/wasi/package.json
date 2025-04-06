@@ -1,7 +1,6 @@
 {
-  "name": "@runno/wasi",
+  "name": "@cs106l/wasi",
   "version": "0.7.0",
-  "author": "Ben Taylor <runno@taybenlor.com>",
   "description": "Browser-only WASI implementation",
   "website": "https://runno.dev",
   "keywords": [
@@ -11,7 +10,7 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git://github.com/taybenlor/runno.git"
+    "url": "git@github.com:cs106l/runno.git"
   },
   "license": "MIT",
   "publishConfig": {

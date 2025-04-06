@@ -80,19 +80,20 @@ export class WASIWorkerHost {
             );
             break;
           case "result":
-            resolve(message.result);
+            resolve({ exitCode: message.exitCode, fs: this.drive.fs });
             break;
           case "crash":
             reject(message.error);
             break;
           case "drive":
-            const fn = this.drive[message.name];
+            const fn = this.drive[message.name].bind(this.drive);
             Promise.resolve(fn(...(message.args as any[])))
               .then((result) => this.driveConnection.send(result))
               .catch((error) => {
                 // On error in the AsyncDrive, we need to manually close the WebWorker (it will be asleep)
                 // and then reject the WasiWorkerHost's promise so clients see the error
                 this.worker?.terminate();
+                console.error(error);
                 reject(error);
               });
             break;
