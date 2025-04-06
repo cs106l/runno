@@ -1,3 +1,99 @@
+class ByteStream {
+  protected closedShared: Int32Array; // Shared. Positive if stream closed
+  protected outstandingShared: Int32Array; // Shared. Number of written bytes unread
+  protected data: Uint8Array; // Shared. Ring buffer where data is read/written
+  protected offset: number = 0; // Local.  Location of next byte to read/write
+
+  protected get closed() {
+    return Atomics.load(this.closedShared, 0) > 0;
+  }
+
+  protected get outstanding() {
+    return Atomics.load(this.outstandingShared, 0);
+  }
+
+  constructor(protected buffer: SharedArrayBuffer) {
+    if (buffer.byteLength < 16) throw new Error("Buffer too small");
+    this.closedShared = new Int32Array(buffer, 0, 1);
+    this.outstandingShared = new Int32Array(buffer, 4, 1);
+    this.data = new Uint8Array(buffer, 8);
+  }
+
+  writer(): Writer {
+    return new Writer(this.buffer);
+  }
+
+  reader(): Reader {
+    return new Reader(this.buffer);
+  }
+}
+
+class Writer extends ByteStream {
+  constructor(buffer: SharedArrayBuffer) {
+    super(buffer);
+    Atomics.store(this.closedShared, 0, 0);
+  }
+
+  async write(src: Uint8Array, byteOffset?: number, length?: number) {
+    if (this.closed) throw new Error("Stream closed");
+
+    src = src.slice(byteOffset, length);
+    while (src.length > 0) {
+      while (this.outstanding !== 0) {
+        // Wait until buffer has been completely drained by reader
+        Atomics.notify(this.outstandingShared, 0, 1);
+        await Promise.resolve();
+      }
+
+      // Write as much data as we can into the buffer
+
+      const before = src.slice(0, this.data.length - this.offset);
+      const after = src.slice(before.length);
+
+      this.data.set(before, this.offset);
+      this.data.set(after, 0);
+
+      const chunkLen = Math.min(
+        src.length,
+        this.data.length - this.outstanding
+      );
+      this.offset = (this.offset + chunkLen) % this.data.length;
+      Atomics.add(this.outstandingShared, 0, chunkLen);
+      src = src.slice(chunkLen);
+    }
+  }
+
+  close() {
+    Atomics.store(this.closedShared, 0, 1); // Close the connection
+    Atomics.notify(this.outstandingShared, 0, 1); // Wake up reader to start reading
+  }
+}
+
+class Reader extends ByteStream {
+  read(dst: Uint8Array, byteOffset?: number, length?: number): void {
+    dst = dst.slice(byteOffset, length);
+    while (dst.length > 0) {
+      // If connection has been closed and there's nothing left to read, exit
+      if (this.closed && this.outstanding === 0) return;
+
+      // Block until writer has written data
+      Atomics.wait(this.outstandingShared, 0, this.data.length);
+
+      const chunkLen = Math.min(dst.length, this.outstanding);
+
+      const before = dst.slice(0, this.data.length - this.offset);
+      const after = dst.slice(before.length);
+
+      before.set(this.data.slice(this.offset, this.offset + chunkLen));
+      after.set(this.data.slice(0, chunkLen - before.length));
+
+      this.offset = (this.offset + chunkLen) % this.data.length;
+      Atomics.sub(this.outstandingShared, 0, chunkLen);
+      dst = dst.slice(chunkLen);
+    }
+  }
+}
+
 enum TypeTag {
   Int32 = 1,
   Int64,
@@ -41,6 +137,8 @@ export class SerializedConnection {
       await Promise.resolve();
     }
 
+    console.log("sending: ", data);
+
     this.offset = 4;
     this.writeTagged(data);
     Atomics.store(this.atomicsView, 0, 1);
@@ -52,6 +150,9 @@ export class SerializedConnection {
     Atomics.wait(this.atomicsView, 0, 0);
     this.offset = 4;
     const value = this.readTagged();
+
+    console.log("receiving: ", value);
+
     Atomics.store(this.atomicsView, 0, 0);
     return value;
   }
@@ -168,8 +269,12 @@ export class SerializedConnection {
 
       case TypeTag.Uint8Array:
         const byteLength = this.read(TypeTag.Int32);
-        const byteArray = new Uint8Array(this.buffer, this.offset, byteLength);
+        const slice = new Uint8Array(this.buffer, this.offset, byteLength);
         this.offset += byteLength;
+
+        // Return a copy of the array to avoid sharing
+        const byteArray = new Uint8Array(slice.length);
+        byteArray.set(slice);
         return byteArray as TypeTagMap[Tag];
 
       case TypeTag.Array:

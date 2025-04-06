@@ -18,7 +18,7 @@ import {
 import { Whence as UnstableWhence } from "./unstable";
 import { WASIExecutionResult } from "../types";
 import { WASIContext, WASIContextOptions } from "./wasi-context";
-import { DriveStat, SyncDrive, WASIDrive } from "./wasi-drive";
+import { DriveStat, SyncDrive } from "./wasi-drive";
 
 /** Injects a function between implementation and return for debugging */
 export type DebugFn = (
@@ -640,11 +640,7 @@ export class WASI implements SnapshotPreview1 {
       return statResult;
     }
 
-    const [flagsResult, flags] = this.drive.getFlags(fd);
-    if (flagsResult !== Result.SUCCESS) {
-      return flagsResult;
-    }
-
+    const flags = this.drive.getFlags(fd);
     const buffer = createFdStat(stat.type, flags);
     const retBuffer = new Uint8Array(
       this.memory.buffer,

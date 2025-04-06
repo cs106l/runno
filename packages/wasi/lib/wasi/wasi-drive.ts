@@ -75,7 +75,7 @@ export interface SyncDrive {
 
   setFlags(fd: FileDescriptor, flags: number): Result;
 
-  getFlags(fd: FileDescriptor): DriveResult<number>;
+  getFlags(fd: FileDescriptor): number;
 
   setSize(fd: FileDescriptor, size: bigint): Result;
 
@@ -428,12 +428,12 @@ export class WASIDrive implements SyncDrive {
     }
   }
 
-  getFlags(fd: FileDescriptor): DriveResult<number> {
+  getFlags(fd: FileDescriptor): number {
     const file = this.openMap.get(fd)!;
     if (file instanceof OpenFile) {
-      return [Result.SUCCESS, file.fdflags];
+      return file.fdflags;
     } else {
-      return [Result.EBADF];
+      return 0;
     }
   }
 
