@@ -40,7 +40,6 @@ export class WASIWorkerHost {
   private driveConnection: SerializedConnection;
 
   constructor(binaryURL: string, context: WASIWorkerHostContext) {
-    console.log("constructing worker!");
     this.binaryURL = binaryURL;
     this.context = context;
 
@@ -52,7 +51,6 @@ export class WASIWorkerHost {
     this.driveConnection = new SerializedConnection(
       new SharedArrayBuffer(8 * 1024)
     );
-    console.log("worker constructed");
   }
 
   async start() {
@@ -63,11 +61,9 @@ export class WASIWorkerHost {
     this.result = new Promise<WASIExecutionResult>((resolve, reject) => {
       this.reject = reject;
       this.worker = new WASIWorker();
-      console.log("WORKER CREATED");
 
       this.worker.addEventListener("message", (messageEvent) => {
         const message: HostMessage = messageEvent.data;
-        console.log("received message: ", message);
         switch (message.type) {
           case "stdout":
             this.context.stdout?.(message.text);
@@ -84,7 +80,7 @@ export class WASIWorkerHost {
             );
             break;
           case "result":
-            resolve(message.result);
+            resolve({ exitCode: message.exitCode, fs: this.drive.fs });
             break;
           case "crash":
             reject(message.error);

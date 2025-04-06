@@ -1,6 +1,6 @@
 import { WASI } from "../wasi/wasi";
 import { WASIContextOptions } from "../wasi/wasi-context";
-import type { WASIExecutionResult, WASIFS } from "../types";
+import type { WASIFS } from "../types";
 import type { SyncDrive } from "../wasi/wasi-drive";
 import { SerializedConnection } from "./connection";
 
@@ -41,8 +41,6 @@ class BlockingDrive implements SyncDrive {
     return (
       ...args: Parameters<SyncDrive[Name]>
     ): ReturnType<SyncDrive[Name]> => {
-      console.log("Calling drive fn: ", name);
-
       sendMessage({
         target: "host",
         type: "drive",
@@ -94,7 +92,7 @@ type DebugHostMessage = {
 type ResultHostMessage = {
   target: "host";
   type: "result";
-  result: WASIExecutionResult;
+  exitCode: number;
 };
 
 type CrashHostMessage = {
@@ -103,6 +101,7 @@ type CrashHostMessage = {
   error: {
     message: string;
     type: string;
+    stack?: string;
   };
 };
 
@@ -143,7 +142,7 @@ onmessage = async (ev: MessageEvent) => {
         sendMessage({
           target: "host",
           type: "result",
-          result,
+          exitCode: result.exitCode,
         });
       } catch (e) {
         let error;
@@ -151,6 +150,7 @@ onmessage = async (ev: MessageEvent) => {
           error = {
             message: e.message,
             type: e.constructor.name,
+            stack: e.stack,
           };
         } else {
           error = {
