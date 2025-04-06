@@ -37,20 +37,6 @@ class ByteStream {
   reader(): Reader {
     return new Reader(this.buffer);
   }
-
-  protected pprint(arr: Uint8Array, max: number = 50) {
-    const len = arr.length;
-
-    if (len <= max) {
-      return `[${arr.toString()}]`;
-    }
-
-    const half = Math.floor(max / 2);
-    const start = Array.from(arr.slice(0, half));
-    const end = Array.from(arr.slice(len - (max - half)));
-
-    return `[${start.toString()}, ..., ${end.toString()}]`;
-  }
 }
 
 class Writer extends ByteStream {
@@ -96,11 +82,6 @@ class Writer extends ByteStream {
       this.data.set(before, this.offset);
       this.data.set(after, 0);
 
-      // console.log(
-      //   `Wrote chunk of size ${chunkLen}: ${this.pprint(
-      //     src.subarray(0, chunkLen)
-      //   )}. Write offset = ${this.offset}`
-      // );
       this.offset = (this.offset + chunkLen) % this.data.length;
       Atomics.add(this.outstandingShared, 0, chunkLen);
       src = src.subarray(chunkLen);
@@ -160,11 +141,6 @@ class Reader extends ByteStream {
 
       this.offset = (this.offset + chunkLen) % this.data.length;
       Atomics.sub(this.outstandingShared, 0, chunkLen);
-      // console.log(
-      //   `Read chunk of size ${chunkLen}: ${this.pprint(
-      //     dst.subarray(0, chunkLen)
-      //   )}. Read offset = ${this.offset}`
-      // );
       dst = dst.subarray(chunkLen);
       read += chunkLen;
     }
