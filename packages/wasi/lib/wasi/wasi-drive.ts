@@ -332,7 +332,7 @@ export class WASIDrive {
       const stat = new OpenDirectory(Object.fromEntries(dir), prefix).stat();
       return [Result.SUCCESS, stat];
     } else {
-      return [Result.ENOTCAPABLE];
+      return [Result.ENOENT];
     }
   }
 
@@ -637,7 +637,9 @@ class OpenFile {
     let underBuffer: ArrayBuffer;
 
     if (this.buffer.buffer.byteLength === 0) {
-      underBuffer = new ArrayBuffer(requiredBytes < 1024 ? 1024 : requiredBytes * 2);
+      underBuffer = new ArrayBuffer(
+        requiredBytes < 1024 ? 1024 : requiredBytes * 2
+      );
     } else if (requiredBytes > this.buffer.buffer.byteLength * 2) {
       underBuffer = new ArrayBuffer(requiredBytes * 2);
     } else {
