@@ -1,8 +1,9 @@
 import { WASIFS } from "../types";
 import { DebugFn } from "./wasi";
+import { SyncDrive, WASIDrive } from "./wasi-drive";
 
 export type WASIContextOptions = {
-  fs: WASIFS;
+  fs: WASIFS | SyncDrive;
   args: string[];
   env: Record<string, string>;
   stdin: (maxByteLength: number) => string | null;
@@ -11,6 +12,23 @@ export type WASIContextOptions = {
   debug: DebugFn;
   isTTY: boolean;
 };
+
+function splitFSDrive(fs?: WASIContextOptions["fs"]): [WASIFS, SyncDrive] {
+  if (!fs) {
+    const wfs: WASIFS = {};
+    return [wfs, new WASIDrive(wfs)];
+  }
+
+  // This is a hacky way of distinguishing between a WASIFS and SyncDrive
+  // but it should work since a WASIFS is plain data
+  if ("open" in fs && typeof fs.open === "function") {
+    const drive = fs as SyncDrive;
+    return [drive.fs, drive];
+  }
+
+  const wfs = fs as WASIFS;
+  return [wfs, new WASIDrive(wfs)];
+}
 
 /**
  * WASIContext
@@ -30,6 +48,7 @@ export type WASIContextOptions = {
  */
 export class WASIContext {
   fs: WASIFS;
+  drive: SyncDrive;
   args: string[]; // Program args (like from a terminal program)
   env: Record<string, string>; // Environment (like a .env file)
   stdin: WASIContextOptions["stdin"];
@@ -39,7 +58,7 @@ export class WASIContext {
   isTTY: WASIContextOptions["isTTY"];
 
   constructor(options?: Partial<WASIContextOptions>) {
-    this.fs = options?.fs ?? {};
+    [this.fs, this.drive] = splitFSDrive(options?.fs);
     this.args = options?.args ?? [];
     this.env = options?.env ?? {};
 

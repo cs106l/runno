@@ -7,11 +7,17 @@ import {
 } from "./snapshot-preview1";
 import { WASIFile, WASIFS, WASIPath, WASITimestamps } from "../types";
 
-type FileDescriptor = number;
+//
+// Drive Interface
+//
 
-type DriveResult<T> = [Exclude<Result, Result.SUCCESS>] | [Result.SUCCESS, T];
+export type FileDescriptor = number;
 
-type DirectoryEntry = { name: string; type: FileType };
+export type DriveResult<T> =
+  | [Exclude<Result, Result.SUCCESS>]
+  | [Result.SUCCESS, T];
+
+export type DirectoryEntry = { name: string; type: FileType };
 
 export type DriveStat = {
   path: string;
@@ -20,7 +26,79 @@ export type DriveStat = {
   type: FileType;
 };
 
-export class WASIDrive {
+export interface SyncDrive {
+  fs: WASIFS;
+
+  open(
+    fdDir: FileDescriptor,
+    path: WASIPath,
+    oflags: number,
+    fdflags: number
+  ): DriveResult<FileDescriptor>;
+
+  close(fd: FileDescriptor): Result;
+
+  read(fd: FileDescriptor, bytes: number): DriveResult<Uint8Array>;
+
+  pread(
+    fd: FileDescriptor,
+    bytes: number,
+    offset: number
+  ): DriveResult<Uint8Array>;
+
+  write(fd: FileDescriptor, data: Uint8Array): Result;
+
+  pwrite(fd: FileDescriptor, data: Uint8Array, offset: number): Result;
+
+  sync(fd: FileDescriptor): Result;
+
+  seek(fd: FileDescriptor, offset: bigint, whence: Whence): DriveResult<bigint>;
+
+  tell(fd: FileDescriptor): DriveResult<bigint>;
+
+  renumber(oldFd: FileDescriptor, newFd: FileDescriptor): Result;
+
+  unlink(fdDir: FileDescriptor, path: WASIPath): Result;
+
+  rename(
+    oldFdDir: FileDescriptor,
+    oldPath: WASIPath,
+    newFdDir: FileDescriptor,
+    newPath: WASIPath
+  ): Result;
+
+  list(fd: FileDescriptor): DriveResult<Array<DirectoryEntry>>;
+
+  stat(fd: FileDescriptor): DriveResult<DriveStat>;
+
+  pathStat(fdDir: FileDescriptor, path: string): DriveResult<DriveStat>;
+
+  setFlags(fd: FileDescriptor, flags: number): Result;
+
+  getFlags(fd: FileDescriptor): number;
+
+  setSize(fd: FileDescriptor, size: bigint): Result;
+
+  setAccessTime(fd: FileDescriptor, date: Date): Result;
+
+  setModificationTime(fd: FileDescriptor, date: Date): Result;
+
+  pathSetAccessTime(fdDir: FileDescriptor, path: string, date: Date): Result;
+
+  pathSetModificationTime(
+    fdDir: FileDescriptor,
+    path: string,
+    date: Date
+  ): Result;
+
+  pathCreateDir(fdDir: FileDescriptor, path: string): Result;
+}
+
+//
+// Drive Implementation
+//
+
+export class WASIDrive implements SyncDrive {
   fs: WASIFS;
   nextFD: FileDescriptor = 10;
   openMap: Map<FileDescriptor, OpenFile | OpenDirectory> = new Map();
@@ -69,6 +147,10 @@ export class WASIDrive {
     }
 
     return dir.containsDirectory(path);
+  }
+
+  private exists(fd: FileDescriptor): boolean {
+    return this.openMap.has(fd);
   }
 
   //
@@ -305,7 +387,7 @@ export class WASIDrive {
 
   stat(fd: FileDescriptor): DriveResult<DriveStat> {
     const file = this.openMap.get(fd);
-    if (!(file instanceof OpenFile)) {
+    if (!file) {
       return [Result.EBADF];
     }
 
@@ -343,6 +425,15 @@ export class WASIDrive {
       return Result.SUCCESS;
     } else {
       return Result.EBADF;
+    }
+  }
+
+  getFlags(fd: FileDescriptor): number {
+    const file = this.openMap.get(fd)!;
+    if (file instanceof OpenFile) {
+      return file.fdflags;
+    } else {
+      return 0;
     }
   }
 
@@ -437,34 +528,6 @@ export class WASIDrive {
       content: "",
     };
     return Result.SUCCESS;
-  }
-
-  //
-  // Public Helpers
-  //
-
-  exists(fd: FileDescriptor): boolean {
-    return this.openMap.has(fd);
-  }
-
-  fileType(fd: FileDescriptor): FileType {
-    const file = this.openMap.get(fd)!;
-    if (!file) {
-      return FileType.UNKNOWN;
-    } else if (file instanceof OpenFile) {
-      return FileType.REGULAR_FILE;
-    } else {
-      return FileType.DIRECTORY;
-    }
-  }
-
-  fileFdflags(fd: FileDescriptor): number {
-    const file = this.openMap.get(fd)!;
-    if (file instanceof OpenFile) {
-      return file.fdflags;
-    } else {
-      return 0;
-    }
   }
 }
 

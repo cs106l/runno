@@ -18,7 +18,7 @@ import {
 import { Whence as UnstableWhence } from "./unstable";
 import { WASIExecutionResult } from "../types";
 import { WASIContext, WASIContextOptions } from "./wasi-context";
-import { DriveStat, WASIDrive } from "./wasi-drive";
+import { DriveStat, SyncDrive } from "./wasi-drive";
 
 /** Injects a function between implementation and return for debugging */
 export type DebugFn = (
@@ -58,7 +58,7 @@ export class WASI implements SnapshotPreview1 {
   module!: WebAssembly.Module;
   memory!: WebAssembly.Memory;
   context: WASIContext;
-  drive: WASIDrive;
+  drive: SyncDrive;
   hasBeenInitialized: boolean = false;
 
   /**
@@ -97,7 +97,7 @@ export class WASI implements SnapshotPreview1 {
 
   constructor(context: Partial<WASIContextOptions>) {
     this.context = new WASIContext(context);
-    this.drive = new WASIDrive(this.context.fs);
+    this.drive = this.context.drive;
   }
 
   getImportObject() {
@@ -635,13 +635,13 @@ export class WASI implements SnapshotPreview1 {
       return Result.SUCCESS;
     }
 
-    if (!this.drive.exists(fd)) {
-      return Result.EBADF;
+    const [statResult, stat] = this.drive.stat(fd);
+    if (statResult !== Result.SUCCESS) {
+      return statResult;
     }
 
-    const type = this.drive.fileType(fd);
-    const fdflags = this.drive.fileFdflags(fd);
-    const buffer = createFdStat(type, fdflags);
+    const flags = this.drive.getFlags(fd);
+    const buffer = createFdStat(stat.type, flags);
     const retBuffer = new Uint8Array(
       this.memory.buffer,
       retptr0,
